@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fund Flow</title>
+<style>
+:root{--ink:#12263a;--paper:#eef2f1;--card:#fff;--line:#d3dcda;--teal:#0b7a75;--on:#fff;--amber:#c77d0a;--red:#b3261e;--muted:#5b6b73}
+@media (prefers-color-scheme:dark){:root{--ink:#e6eeee;--paper:#0f1a22;--card:#16252f;--line:#2a3d49;--teal:#37b3ab;--on:#0f1a22;--amber:#e0a030;--red:#ff8a80;--muted:#9bb0ba}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+.serif,h1,h2,.bal{font-family:"Iowan Old Style","Palatino Linotype",Georgia,serif}
+[hidden]{display:none!important}
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;background:var(--card);border-bottom:1px solid var(--line)}
+header h1{margin:0;font-size:20px}
+main{max-width:1100px;margin:0 auto;padding:20px}
+h2{margin:0 0 12px;font-size:18px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:18px;margin-bottom:16px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:760px){.cols{grid-template-columns:1fr}}
+button,input,select{font:inherit;color:inherit}
+input,select{padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--paper);width:100%}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+button{padding:8px 16px;border:1px solid var(--teal);background:var(--teal);color:var(--on);border-radius:6px;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+button.tab[aria-selected=true]{border-color:var(--teal);box-shadow:inset 0 -3px 0 var(--teal)}
+button:disabled{opacity:.5;cursor:wait}
+label{display:block;margin:10px 0 4px;color:var(--muted);font-size:13px}
+.row{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.row>*{flex:1;min-width:110px}
+.acct{display:flex;justify-content:space-between;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--line)}
+.acct:last-child{border:0}.bal{font-size:26px}
+.muted{color:var(--muted)}.ok{color:var(--teal)}.bad{color:var(--red)}
+.tbl{overflow-x:auto}table{border-collapse:collapse;width:100%}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-weight:600}
+td.n,th.n{text-align:right}
+#login{max-width:360px;margin:12vh auto;padding:0 20px}
+.stats{display:flex;gap:22px;flex-wrap:wrap;margin:14px 0}.stats b{display:block;font-size:22px}
+.lane{position:relative;height:30px;margin:5px 0 5px 84px;background:var(--paper);border-radius:4px}
+.lane span.name{position:absolute;left:-84px;top:5px;color:var(--muted);font-size:13px}
+.blk{position:absolute;top:3px;height:24px;min-width:5px;border-radius:3px;color:#fff;font-size:11px;line-height:24px;padding-left:3px;overflow:hidden}
+.chip{display:inline-block;padding:2px 9px;margin:0 6px 6px 0;border:1px solid var(--line);border-radius:6px;font-size:13px}
+</style>
+</head>
+<body>
+
+<section id="login" hidden>
+  <h1 class="serif" style="font-size:30px;margin:0 0 4px">Fund Flow</h1>
+  <p class="muted" style="margin:0 0 18px">Sign in to manage your accounts.</p>
+  <form id="loginForm" class="panel">
+    <label for="u">Username</label><input id="u" autocomplete="username" required>
+    <label for="p">Password</label><input id="p" type="password" autocomplete="current-password" required>
+    <p id="loginMsg" class="bad" role="alert"></p>
+    <button style="width:100%">Sign in</button>
+    <p class="muted" style="font-size:13px;margin-bottom:0">Demo: alice / password123, admin / admin123</p>
+  </form>
+</section>
+
+<div id="app" hidden>
+  <header><h1>Fund Flow</h1><div><span id="who" class="muted"></span> <button class="ghost" id="out">Sign out</button></div></header>
+  <main id="main"></main>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'-').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const money=v=>Number(v).toLocaleString('en-IN',{minimumFractionDigits:2});
+async function api(path,body){
+  const r=await fetch('/api/'+path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error(d.error||'Request failed');
+  return d;
+}
+let me=null,timer=null;
+const table=(head,rows)=>`<div class="tbl"><table><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr>${rows.join('')||`<tr><td colspan="${head.length}" class="muted">Nothing here yet.</td></tr>`}</table></div>`;
+
+async function init(){ try{me=await api('me')}catch{me=null} render(); }
+function render(){
+  clearInterval(timer);
+  $('#login').hidden=!!me; $('#app').hidden=!me;
+  if(!me) return;
+  $('#who').textContent=me.username;
+  me.role==='ADMIN'?adminView():customerView();
+}
+$('#loginForm').onsubmit=async e=>{
+  e.preventDefault(); $('#loginMsg').textContent='';
+  try{ me=await api('login',{username:$('#u').value,password:$('#p').value}); $('#p').value=''; render(); }
+  catch(x){ $('#loginMsg').textContent=x.message; }
+};
+$('#out').onclick=async()=>{ await api('logout',{}); me=null; render(); };
+
+/* ------------------------------------------------------------ customer */
+function customerView(){
+  $('#main').innerHTML=`<div class="cols">
+    <section class="panel"><h2>My accounts</h2><div id="accts"></div></section>
+    <section class="panel"><h2>Move money</h2>
+      <form id="op">
+        <label for="type">What do you want to do?</label>
+        <select id="type"><option value="deposit">Deposit</option><option value="withdraw">Withdraw</option><option value="transfer">Transfer to another account</option></select>
+        <label for="acc">From my account</label><select id="acc"></select>
+        <div id="toBox" hidden><label for="to">To account number</label><input id="to" placeholder="e.g. ACC1003"></div>
+        <label for="amt">Amount</label><input id="amt" type="number" min="0.01" step="0.01" required>
+        <p id="opMsg" role="status" style="min-height:24px"></p>
+        <button id="send">Send request</button>
+      </form>
+    </section></div>
+    <section class="panel"><h2>Transaction history</h2><div id="hist"></div></section>`;
+  $('#type').onchange=()=>{ $('#toBox').hidden=$('#type').value!=='transfer'; };
+  $('#op').onsubmit=async e=>{
+    e.preventDefault(); const m=$('#opMsg'), b=$('#send');
+    b.disabled=true; m.className='muted'; m.textContent='Request is in the queue, waiting for a worker thread...';
+    try{
+      const r=await api($('#type').value,{account:$('#acc').value,to:$('#to').value,amount:$('#amt').value});
+      m.className=r.success?'ok':'bad'; m.textContent=r.message; if(r.success) $('#amt').value='';
+    }catch(x){ m.className='bad'; m.textContent=x.message; }
+    b.disabled=false; loadCustomer();
+  };
+  loadCustomer();
+}
+async function loadCustomer(){
+  const [accts,tx]=await Promise.all([api('accounts'),api('transactions')]);
+  $('#accts').innerHTML=accts.map(a=>`<div class="acct"><div><b>${esc(a.accountNo)}</b><div class="muted">${esc(a.type.toLowerCase())}, ${esc(a.status.toLowerCase())}</div></div><div class="bal">${money(a.balance)}</div></div>`).join('');
+  const sel=$('#acc'), cur=sel.value;
+  sel.innerHTML=accts.map(a=>`<option>${esc(a.accountNo)}</option>`).join(''); if(cur) sel.value=cur;
+  $('#hist').innerHTML=table(['Date','Type','From','To','Amount'],tx.map(t=>`<tr><td>${esc(t.date)}</td><td>${esc(t.type.toLowerCase())}</td><td>${esc(t.from)}</td><td>${esc(t.to)}</td><td class="n">${money(t.amount)}</td></tr>`));
+}
+
+/* ------------------------------------------------------------ admin */
+function adminView(){
+  $('#main').innerHTML=`<div class="row" style="margin-bottom:14px;justify-content:start">
+    <button class="tab ghost" data-t="tx" style="flex:none">Transactions</button>
+    <button class="tab ghost" data-t="audit" style="flex:none">Audit log</button>
+    <button class="tab ghost" data-t="mon" style="flex:none">Scheduler monitor</button></div><div id="pane"></div>`;
+  document.querySelectorAll('.tab').forEach(b=>b.onclick=()=>tab(b.dataset.t));
+  tab('mon');
+}
+async function tab(t){
+  clearInterval(timer);
+  document.querySelectorAll('.tab').forEach(b=>b.setAttribute('aria-selected',b.dataset.t===t));
+  if(t==='tx'){ const d=await api('transactions');
+    $('#pane').innerHTML=`<section class="panel"><h2>All transactions</h2>${table(['ID','Date','Type','From','To','Amount','Status'],d.map(t=>`<tr><td>${t.id}</td><td>${esc(t.date)}</td><td>${esc(t.type.toLowerCase())}</td><td>${esc(t.from)}</td><td>${esc(t.to)}</td><td class="n">${money(t.amount)}</td><td>${esc(t.status.toLowerCase())}</td></tr>`))}</section>`; }
+  else if(t==='audit'){ const d=await api('audit');
+    $('#pane').innerHTML=`<section class="panel"><h2>Audit log</h2><p class="muted">Written by a database trigger on every balance change.</p>${table(['Time','Account','Change','Before','After'],d.map(a=>`<tr><td>${esc(a.time)}</td><td>${esc(a.account)}</td><td>${esc(a.action.toLowerCase())}</td><td class="n">${money(a.oldBalance)}</td><td class="n">${money(a.newBalance)}</td></tr>`))}</section>`; }
+  else monitorView();
+}
+
+function monitorView(){
+  $('#pane').innerHTML=`<section class="panel"><h2>Scheduler monitor</h2>
+    <div class="row">
+      <div><label for="algo">Scheduling algorithm</label><select id="algo"><option value="FCFS">First come first served</option><option value="ROUND_ROBIN">Round robin</option><option value="SJF">Shortest job first</option><option value="PRIORITY">Priority</option></select></div>
+      <div><label for="q">Round robin quantum (steps)</label><input id="q" type="number" min="1" max="4" value="1"></div>
+      <button id="apply" style="flex:none">Apply algorithm</button>
+      <div><label for="cnt">Random transfers to send</label><input id="cnt" type="number" min="1" max="300" value="50"></div>
+      <button id="fire" style="flex:none">Send transfers</button>
+    </div><p id="monMsg" class="muted" role="status"></p><div id="mon"></div></section>`;
+  $('#apply').onclick=async()=>{ try{ const r=await api('algorithm',{algorithm:$('#algo').value,quantum:$('#q').value}); $('#monMsg').textContent=r.message; }catch(x){ $('#monMsg').textContent=x.message; } };
+  $('#fire').onclick=async()=>{ try{ const r=await api('load',{count:$('#cnt').value}); $('#monMsg').textContent=r.message; }catch(x){ $('#monMsg').textContent=x.message; } };
+  const poll=async()=>{ try{ drawMonitor(await api('monitor')); }catch{} };
+  poll(); timer=setInterval(poll,700);
+}
+
+function drawMonitor(m){
+  const sl=m.slices.slice().reverse();
+  const t0=Math.min(...sl.map(s=>s.end-s.ms)), span=Math.max(Math.max(...sl.map(s=>s.end))-t0,1);
+  let lanes='';
+  for(let w=1;w<=m.workers;w++){
+    const blocks=sl.filter(s=>s.worker==='Worker-'+w).map(s=>{
+      const left=(s.end-s.ms-t0)/span*100, width=Math.max(s.ms/span*100,0.6);
+      return `<div class="blk" style="left:${left}%;width:${width}%;background:hsl(${(s.id*47)%360} 55% 38%)" title="Request ${s.id} (${s.type.toLowerCase()}), steps ${s.from} to ${s.to}, ${s.ms} ms">${s.id}</div>`;
+    }).join('');
+    lanes+=`<div class="lane"><span class="name">Worker ${w}</span>${blocks}</div>`;
+  }
+  $('#mon').innerHTML=`<p class="muted">${esc(m.description)}. ${m.queueSize} waiting.</p>
+    <div class="stats"><div><b>${m.completed}</b>completed</div><div><b>${m.failed}</b>failed</div><div><b>${m.avgWait} ms</b>average wait</div><div><b>${m.avgResponse} ms</b>average first response</div><div><b>${m.avgTurnaround} ms</b>average turnaround</div><div><b>${m.lockWaits}</b>lock waits of ${m.lockAcquisitions}</div></div>
+    <h2 style="font-size:16px">Next in queue</h2><div>${m.queue.map(q=>`<span class="chip">#${q.id} ${esc(q.type.toLowerCase())}, priority ${q.priority}, ${q.steps}</span>`).join('')||'<span class="muted">Queue is empty.</span>'}</div>
+    <h2 style="font-size:16px;margin-top:14px">What each worker thread ran</h2>
+    <p class="muted" style="margin-top:0">Each block is one turn of one request. A request number that shows up in several blocks was preempted and sent back to the queue.</p>${lanes}`;
+}
+init();
+</script>
+</body>
+</html>

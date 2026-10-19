@@ -34,6 +34,15 @@ public class AccountDAO {
         return list;
     }
 
+    public List<Account> findAll() throws SQLException {
+        List<Account> list = new ArrayList<>();
+        try (Connection c = DBConnection.getConnection(); Statement st = c.createStatement();
+             ResultSet rs = st.executeQuery("SELECT * FROM account ORDER BY account_no")) {
+            while (rs.next()) list.add(map(rs));
+        }
+        return list;
+    }
+
     public List<String> findActiveAccountNos() throws SQLException {
         List<String> list = new ArrayList<>();
         try (Connection c = DBConnection.getConnection(); Statement st = c.createStatement();
